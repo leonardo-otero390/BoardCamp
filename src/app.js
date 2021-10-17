@@ -122,7 +122,7 @@ app.post('/customers', async (req, res) => {
     name: joi.string().min(1).required(),
     birthday: joi.date().required()
   })
-  if (!!schema.validate(body).error) return res.send(schema.validate(body).error);
+  if (!!schema.validate(body).error) return res.sendStatus(400);
   const { cpf, phone, name, birthday } = body;
   try {
     const { rows: customers } = await pool.query('SELECT * FROM customers WHERE cpf=$1;', [cpf]);
@@ -133,6 +133,27 @@ app.post('/customers', async (req, res) => {
     res.status(500).send(err.message);
   }
 });
+
+app.put('/customers/:id', async (req, res) => {
+  const id = req.params.id;
+  const body = req.body;
+  const schema = joi.object({
+    cpf: joi.string().length(11).required(),
+    phone: joi.string().min(10).max(11).required(),
+    name: joi.string().min(1).required(),
+    birthday: joi.date().required()
+  })
+  if (!!schema.validate(body).error) return res.sendStatus(400);
+  const { cpf, phone, name, birthday } = body;
+  try {
+    const { rows: customers } = await pool.query('SELECT * FROM customers WHERE cpf=$1 AND id!=$2;', [cpf, id]);
+    if (customers.length) return res.sendStatus(409);
+    await pool.query('UPDATE customers SET cpf=$2, phone=$3, name=$4, birthday=$5 WHERE id=$1;', [id, cpf, phone, name, birthday]);
+    res.sendStatus(200);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+})
 
 app.listen(4000, () => {
   console.log('Server is litening on port 4000.');
