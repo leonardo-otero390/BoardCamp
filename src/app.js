@@ -2,6 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import cors from 'cors';
 import joi from 'joi';
+import dayjs from 'dayjs';
 
 const { Pool } = pg;
 
@@ -150,6 +151,51 @@ app.put('/customers/:id', async (req, res) => {
     if (customers.length) return res.sendStatus(409);
     await pool.query('UPDATE customers SET cpf=$2, phone=$3, name=$4, birthday=$5 WHERE id=$1;', [id, cpf, phone, name, birthday]);
     res.sendStatus(200);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+})
+
+app.get('/rentals', async (req, res) => {
+  const customerId = req.query.customerId;
+  const gameId = req.query.gameId;
+  try {
+    const { rows: rentals } = await pool.query('SELECT * FROM rentals;');
+    if (rentals.length === 0) return res.sendStatus(204);
+    if (!!gameId) {
+      const filteredList = rentals.filter(r => r.game.id === gameId);
+      return res.status(200).send(filteredList);
+    }
+    if (!!customerId) {
+      const filteredList = rentals.filter(r => r.customerId === customerId);
+      return res.status(200).send(filteredList);
+    }
+    res.status(200).send(rentals);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+})
+
+app.post('/rentals', async (req, res) => {
+  const { customerId, gameId, daysRented } = req.body;
+  if (daysRented <= 0) return res.sendStatus(400);
+  try {
+    const { rows: customer } = await pool.query('SELECT * FROM customers WHERE id=$1', [customerId]);
+    const { rows: game } = await pool.query('SELECT * FROM games WHERE id=$1', [gameId]);
+    const { rows: gameRentals } = await pool.query('SELECT * FROM rentals WHERE "gameId"=$1 AND "returnDate"=NULL', [gameId]);
+
+    if (!customer.length || !game.length || game[0].stockTotal < gameRentals.length) return res.sendStatus(400);
+
+    const originalPrice = game[0].pricePerDay * daysRented;
+    const rentDate = dayjs().format('YYYY-MM-DD');
+
+    await pool.query(`
+      INSERT INTO rentals
+      ("customerId","gameId","daysRented","returnDate","originalPrice","delayFee","rentDate") 
+      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [customerId, gameId, daysRented, null, originalPrice, null, rentDate]
+    )
+    res.sendStatus(201);
   } catch (err) {
     res.status(500).send(err.message);
   }
