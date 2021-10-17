@@ -86,6 +86,34 @@ app.post('/games', async (req, res) => {
   }
 });
 
+app.get('/customers', async (req, res) => {
+  const search = req.query.cpf;
+  try {
+    const { rows: custumers } = await pool.query('SELECT * FROM customers;');
+    if (custumers.length === 0) return res.sendStatus(204);
+    if (!!search) {
+      const re = new RegExp('^' + search);
+      const filteredList = custumers.filter(c => re.test(c.cpf));
+      return res.status(200).send(filteredList);
+    }
+    res.status(200).send(custumers);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.get('/customers/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const { rows: custumer } = await pool.query(`SELECT * FROM customers WHERE id = $1;`,[id]);
+    if (custumer.length === 0) return res.sendStatus(404);
+
+    res.status(200).send(custumer[0]);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
 app.listen(4000, () => {
   console.log('Server is litening on port 4000.');
 });
