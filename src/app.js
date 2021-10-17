@@ -79,7 +79,7 @@ app.post('/games', async (req, res) => {
     if (!categories.find(c => c.id === categoryId)) return res.sendStatus(400);
     if (games.find(g => g.name === name)) return res.sendStatus(409);
 
-    await pool.query('INSERT INTO games (id,name,image,"stockTotal","categoryId","pricePerDay") VALUES ( $1, $2, $3, $4, $5,$6 );', [games.length + 1, name,image , stockTotal, categoryId, pricePerDay]);
+    await pool.query('INSERT INTO games (id,name,image,"stockTotal","categoryId","pricePerDay") VALUES ( $1, $2, $3, $4, $5,$6 );', [games.length + 1, name, image, stockTotal, categoryId, pricePerDay]);
     res.sendStatus(201);
   } catch (err) {
     res.status(500).send(err.message);
@@ -105,10 +105,30 @@ app.get('/customers', async (req, res) => {
 app.get('/customers/:id', async (req, res) => {
   const id = req.params.id;
   try {
-    const { rows: custumer } = await pool.query(`SELECT * FROM customers WHERE id = $1;`,[id]);
+    const { rows: custumer } = await pool.query(`SELECT * FROM customers WHERE id = $1;`, [id]);
     if (custumer.length === 0) return res.sendStatus(404);
 
     res.status(200).send(custumer[0]);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.post('/customers', async (req, res) => {
+  const body = req.body;
+  const schema = joi.object({
+    cpf: joi.string().length(11).required(),
+    phone: joi.string().min(10).max(11).required(),
+    name: joi.string().min(1).required(),
+    birthday: joi.date().required()
+  })
+  if (!!schema.validate(body).error) return res.send(schema.validate(body).error);
+  const { cpf, phone, name, birthday } = body;
+  try {
+    const { rows: customers } = await pool.query('SELECT * FROM customers WHERE cpf=$1;', [cpf]);
+    if (customers.length) return res.sendStatus(409);
+    await pool.query('INSERT INTO customers (cpf,phone,name,birthday) VALUES ( $1, $2, $3, $4);', [cpf, phone, name, birthday]);
+    res.sendStatus(201);
   } catch (err) {
     res.status(500).send(err.message);
   }
