@@ -1,6 +1,7 @@
 import express from 'express';
 import pg from 'pg';
 import cors from 'cors';
+import joi from 'joi';
 
 const { Pool } = pg;
 
@@ -15,17 +16,6 @@ const pool = new Pool({
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-app.get('/', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM gghames;');
-    console.log(result.rows);
-    res.sendStatus(201);
-  } catch (err) {
-    console.log(err.message);
-    res.sendStatus(500);
-  }
-});
 
 app.get('/categories', async (req, res) => {
   try {
@@ -64,9 +54,33 @@ app.get('/games', async (req, res) => {
     if (!!search) {
       const re = new RegExp('^' + search.toLowerCase());
       const filteredList = gamesList.filter(g => re.test(g.name.toLowerCase()));
-      res.status(200).send(filteredList);
+      return res.status(200).send(filteredList);
     }
     res.status(200).send(gamesList);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.post('/games', async (req, res) => {
+  const body = req.body;
+  const schema = joi.object({
+    name: joi.string().min(1).required(),
+    image: joi.string().trim().uri(),
+    stockTotal: joi.number().min(1).required(),
+    pricePerDay: joi.number().min(1).required(),
+    categoryId: joi.number().required(),
+  });
+  if (!!schema.validate(body).error) return res.sendStatus(400);
+  try {
+    const { name, image, stockTotal, pricePerDay, categoryId } = body;
+    const { rows: categories } = await pool.query('SELECT * FROM categories;');
+    const { rows: games } = await pool.query('SELECT * FROM games;');
+    if (!categories.find(c => c.id === categoryId)) return res.sendStatus(400);
+    if (games.find(g => g.name === name)) return res.sendStatus(409);
+
+    await pool.query('INSERT INTO games (id,name,image,"stockTotal","categoryId","pricePerDay") VALUES ( $1, $2, $3, $4, $5,$6 );', [games.length + 1, name,image , stockTotal, categoryId, pricePerDay]);
+    res.sendStatus(201);
   } catch (err) {
     res.status(500).send(err.message);
   }
