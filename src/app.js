@@ -3,6 +3,8 @@ import pg from 'pg';
 import cors from 'cors';
 import joi from 'joi';
 import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime.js'
+
 
 const { Pool } = pg;
 
@@ -21,7 +23,7 @@ app.use(express.json());
 app.get('/categories', async (req, res) => {
   try {
     const { rows: categories } = await pool.query('SELECT * FROM categories;');
-    if (categories.length === 0) return res.sendStatus(204);
+    if (categories.length === 0) return res.send([]).status(204);
     res.status(200).send(categories);
   } catch (err) {
     res.status(500).send(err.message);
@@ -46,7 +48,7 @@ app.get('/games', async (req, res) => {
   try {
     const { rows: games } = await pool.query('SELECT * FROM games;');
     const { rows: categories } = await pool.query('SELECT * FROM categories;');
-    if (games.length === 0) return res.sendStatus(204);
+    if (games.length === 0) return res.send([]).status(204);
     const gamesList = games.map(g => {
       const categoryId = g.categoryId;
       const { name: categoryName } = categories.find(c => c.id === categoryId) || { name: "Não especificado" };
@@ -91,7 +93,7 @@ app.get('/customers', async (req, res) => {
   const search = req.query.cpf;
   try {
     const { rows: custumers } = await pool.query('SELECT * FROM customers;');
-    if (custumers.length === 0) return res.sendStatus(204);
+    if (custumers.length === 0) return res.send([]).status(204);
     if (!!search) {
       const re = new RegExp('^' + search);
       const filteredList = custumers.filter(c => re.test(c.cpf));
@@ -159,18 +161,37 @@ app.put('/customers/:id', async (req, res) => {
 app.get('/rentals', async (req, res) => {
   const customerId = req.query.customerId;
   const gameId = req.query.gameId;
+  async function createRentalObjectsLsts(rentalsList){
+    const arr = [];
+    for (let i = 0; i < rentalsList.length; i++) {
+      const { rows: customer } = await pool.query('SELECT id,name FROM customers WHERE id = $1', [rentalsList[i].customerId]);
+      const { rows: game } = await pool.query('SELECT games.id,games.name,games."categoryId",categories.name FROM games JOIN categories ON games."categoryId"=categories.id WHERE games.id = $1', [rentalsList[i].gameId]);
+      arr.push({
+        ...rentalsList[i],
+        customer: customer[0],
+        game: game[0]
+      });
+    }
+    return arr;
+  }
   try {
-    const { rows: rentals } = await pool.query('SELECT * FROM rentals;');
-    if (rentals.length === 0) return res.sendStatus(204);
+    
+    const { rows: rentals } = await pool.query('SELECT * FROM rentals WHERE "returnDate" IS NULL');
+    if (rentals.length === 0) return res.send([]).status(204);
+    
     if (!!gameId) {
-      const filteredList = rentals.filter(r => r.game.id === gameId);
-      return res.status(200).send(filteredList);
+      const { rows: filteredList } = await pool.query('SELECT * FROM rentals WHERE "gameId"=$1 AND "returnDate" IS NULL', [gameId]);
+      const result = await createRentalObjectsLsts(filteredList);
+      return res.status(200).send(result);
     }
     if (!!customerId) {
-      const filteredList = rentals.filter(r => r.customerId === customerId);
-      return res.status(200).send(filteredList);
+      const { rows: filteredList } = await pool.query('SELECT * FROM rentals WHERE "customerId"=$1 AND "returnDate" IS NULL', [customerId]);
+      const result = await createRentalObjectsLsts(filteredList);
+      console.log(result);
+      return res.status(200).send(result);
     }
-    res.status(200).send(rentals);
+    const result = await createRentalObjectsLsts(rentals);
+    res.status(200).send(result);
   } catch (err) {
     res.status(500).send(err.message);
   }
@@ -182,10 +203,10 @@ app.post('/rentals', async (req, res) => {
   try {
     const { rows: customer } = await pool.query('SELECT * FROM customers WHERE id=$1', [customerId]);
     const { rows: game } = await pool.query('SELECT * FROM games WHERE id=$1', [gameId]);
-    const { rows: gameRentals } = await pool.query('SELECT * FROM rentals WHERE "gameId"=$1 AND "returnDate"=NULL', [gameId]);
+    const { rows: gameRentals } = await pool.query('SELECT * FROM rentals WHERE "gameId"=$1 AND "returnDate" IS NULL', [gameId]);
 
     if (!customer.length || !game.length || game[0].stockTotal < gameRentals.length) return res.sendStatus(400);
-
+    console.log(gameRentals.length);
     const originalPrice = game[0].pricePerDay * daysRented;
     const rentDate = dayjs().format('YYYY-MM-DD');
 
@@ -199,6 +220,42 @@ app.post('/rentals', async (req, res) => {
   } catch (err) {
     res.status(500).send(err.message);
   }
+})
+
+app.post('/rentals/:id/return', async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const { rows: rent } = await pool.query('SELECT * FROM rentals WHERE id =$1', [id]);
+    if (rent.length === 0 || rent[0].returnDate !== null) return res.sendStatus(400);
+    const { rentDate, daysRented, gameId } = rent[0];
+    const { rows: pricePerDay } = await pool.query('SELECT "pricePerDay" FROM games WHERE id = $1', [gameId]);
+    const returnDate = dayjs().format('YYYY-MM-DD');
+    dayjs.extend(relativeTime);
+    let daysPassed = dayjs(returnDate).from(rentDate, true);
+    if (daysPassed === 'a day') daysPassed = 1; else daysPassed = daysPassed.match(/[0-9]/);
+    let delayFee = (daysPassed - daysRented) * pricePerDay[0].pricePerDay;
+    if (delayFee < 0) delayFee = null;
+    await pool.query(`
+    UPDATE rentals 
+    SET "returnDate"=$1, "delayFee"=$2 WHERE id=$3`, [returnDate, delayFee, id]);
+
+    res.sendStatus(200);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.delete('/rentals/:id', async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const { rows: rentals } = await pool.query('SELECT * FROM rentals WHERE id =$1', [id]);
+    if (rentals.length === 0) return res.sendStatus(404);
+    if (rentals[0].returnDate !== null) return res.sendStatus(400);
+    await pool.query('DELETE FROM rentals WHERE id =$1', [id]);
+    res.sendStatus(200);
+  } catch (err) { res.status(500).send(err.message) }
 })
 
 app.listen(4000, () => {
